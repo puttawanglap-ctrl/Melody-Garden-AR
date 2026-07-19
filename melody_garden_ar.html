@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Melody Garden AR - สวนเสียงเพลง</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Mali:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Tone.js for Sound Effects -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+    <!-- html2canvas for Screenshot -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Mali', 'sans-serif'],
+                    },
+                    colors: {
+                        farm: {
+                            light: '#a7f3d0',
+                            dark: '#059669'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #86efac; touch-action: none; font-family: 'Mali', sans-serif; }
+        
+        /* Farm Background Theme */
+        .bg-farm {
+            background: linear-gradient(to bottom, #7dd3fc 0%, #38bdf8 40%, #86efac 40%, #22c55e 100%);
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(8px);
+            border: 4px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        }
+        
+        .dotted-input {
+            border: none;
+            border-bottom: 3px dashed #059669;
+            background: transparent;
+            outline: none;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        .dotted-input:focus { border-bottom: 3px dashed #047857; background: rgba(255,255,255,0.5); border-radius: 8px 8px 0 0; }
+        
+        .animate-bounce-slow { animation: bounce 2s infinite; }
+        .animate-pulse-fast { animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 20; pointer-events: none; }
+        .interactive-ui { pointer-events: auto; }
+        
+        /* Loading Spinner */
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #059669; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Video needs to be flipped to act as a mirror */
+        #input_video { transform: scaleX(-1); }
+    </style>
+</head>
+<body class="text-gray-800 bg-farm">
+
+    <!-- Video Element (Hidden from direct view, used for processing and drawing) -->
+    <video id="input_video" class="hidden" autoplay playsinline></video>
+
+    <!-- Canvas for Rendering Video and Game Elements -->
+    <div id="canvas-container">
+        <canvas id="output_canvas" class="w-full h-full"></canvas>
+    </div>
+
+    <!-- UI Layer -->
+    <div id="ui-layer" class="flex flex-col justify-between">
+        
+        <!-- Game HUD (Top Bar) -->
+        <div id="game-hud" class="hidden w-full p-4 flex justify-between items-start transition-opacity duration-300">
+            <!-- Timer -->
+            <div class="glass-panel rounded-2xl px-4 py-2 md:px-6 md:py-2 text-lg md:text-xl font-bold text-red-500 interactive-ui flex items-center gap-2">
+                ⏱️ <span id="time-display">60</span>
+            </div>
+            <!-- Mission Tag -->
+            <div class="glass-panel rounded-3xl px-6 py-2 md:px-10 md:py-3 text-center interactive-ui animate-bounce-slow border-yellow-400 border-4">
+                <p class="text-xs md:text-sm text-gray-500 font-semibold mb-1">🎯 ภารกิจหาโน้ต</p>
+                <h1 class="text-2xl md:text-4xl font-bold" id="mission-display">𝅘𝅥 โน้ตตัวดำ</h1>
+            </div>
+            <!-- Score -->
+            <div class="glass-panel rounded-2xl px-4 py-2 md:px-6 md:py-2 text-lg md:text-xl font-bold text-green-600 interactive-ui flex items-center gap-2">
+                ⭐ <span id="score-display">0</span>
+            </div>
+        </div>
+
+        <!-- Basket Hint (Bottom) -->
+        <div id="basket-hint" class="hidden w-full flex justify-center pb-6">
+            <div class="bg-white/90 rounded-full px-8 py-3 text-farm-dark font-bold tracking-wide shadow-lg interactive-ui text-lg border-4 border-green-400 animate-bounce-slow">
+                🧺 ลากโน้ตที่ถูกต้องมาใส่ตะกร้าตรงนี้เลย!
+            </div>
+        </div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="absolute inset-0 z-30 flex items-center justify-center bg-black/50 backdrop-blur-sm interactive-ui">
+        <div class="glass-panel p-8 rounded-3xl max-w-lg w-[90%] text-center relative overflow-hidden">
+            <h1 class="text-4xl md:text-5xl font-bold text-green-600 mb-2 drop-shadow-sm">Melody Garden AR</h1>
+            <h2 class="text-xl text-yellow-600 font-bold mb-6">เรียนรู้สัญลักษณ์โน้ตดนตรี</h2>
+            
+            <div class="bg-white/70 rounded-xl p-5 text-left mb-6 text-sm md:text-base border border-green-200">
+                <p class="font-bold text-gray-800 mb-3 text-lg border-b pb-2">🎮 วิธีเล่น:</p>
+                <ul class="list-disc pl-5 space-y-2 text-gray-700">
+                    <li>จำสัญลักษณ์ <strong>"ป้ายภารกิจ"</strong> ด้านบน</li>
+                    <li>ทำท่า <strong>"จีบนิ้วโป้งและนิ้วชี้"</strong> เพื่อคีบโน้ตที่ตกลงมา (ใช้ได้ 2 มือ)</li>
+                    <li>ลากโน้ตที่คีบไปปล่อยใน <strong>"ตะกร้า"</strong> ด้านล่าง</li>
+                    <li>ตอบถูกได้คะแนน และมี <span class="text-blue-500 font-bold">เสียงโน้ตดนตรีเพราะๆ</span> ดังขึ้น! 🎵</li>
+                </ul>
+            </div>
+
+            <div id="loading-cam" class="mb-4">
+                <div class="loader mb-3"></div>
+                <p class="text-green-700 font-semibold animate-pulse">กำลังเตรียมระบบกล้องและ AI...</p>
+            </div>
+
+            <button id="start-btn" class="hidden w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold text-2xl py-4 rounded-2xl shadow-xl transform transition hover:scale-105">
+                เริ่มเล่นเกม! 🚀
+            </button>
+        </div>
+    </div>
+
+    <!-- Certificate Screen -->
+    <div id="end-screen" class="hidden absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-md interactive-ui overflow-y-auto py-10">
+        <div class="flex flex-col items-center">
+            <div id="certificate" class="bg-white p-8 md:p-12 rounded-3xl max-w-2xl w-[95%] text-center relative border-8 border-yellow-400 shadow-2xl overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-4 bg-green-500"></div>
+                
+                <h1 class="text-4xl md:text-5xl font-bold text-orange-500 mb-2 mt-4">เกียรติบัตรคนเก่ง</h1>
+                <p class="text-lg text-gray-600 mb-6">ขอมอบประกาศนียบัตรนี้เพื่อแสดงว่า</p>
+                
+                <input type="text" id="player-name" placeholder="พิมพ์ชื่อของคุณที่นี่" class="dotted-input text-3xl md:text-4xl font-bold text-blue-700 w-[80%] mb-6 pb-2 placeholder-gray-300">
+                
+                <p class="text-xl text-gray-700 mb-2">มีความเป็นเลิศด้านความจำและการแยกแยะโน้ตดนตรี</p>
+                <div class="text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-600 my-4">
+                    <span id="final-score">0</span>
+                </div>
+                <p class="text-lg text-gray-600 font-bold mb-8">คะแนนในสวนเสียงเพลง AR</p>
+                
+                <div class="flex justify-between items-end px-4 md:px-10 mt-10">
+                    <div class="text-center">
+                        <div class="w-32 border-b-2 border-gray-400 mb-2 mx-auto"></div>
+                        <p class="text-sm text-gray-500">คุณครู / ผู้ปกครอง</p>
+                    </div>
+                    <div class="bg-yellow-400 rounded-full h-24 w-24 flex items-center justify-center shadow-inner border-4 border-yellow-500 transform rotate-12 relative -bottom-4">
+                        <span class="text-white font-bold text-lg leading-tight drop-shadow-md">Great<br>Job!</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex gap-4 mt-8 flex-wrap justify-center">
+                <button id="capture-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition transform hover:scale-105 flex items-center gap-2">
+                    📸 บันทึกเกียรติบัตร
+                </button>
+                <button id="restart-btn" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition transform hover:scale-105 flex items-center gap-2">
+                    🔄 เล่นอีกครั้ง
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Modal -->
+    <div id="custom-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center bg-black/50 interactive-ui backdrop-blur-sm">
+        <div class="bg-white rounded-3xl p-8 max-w-sm w-[80%] text-center shadow-2xl transform transition-transform duration-300 scale-95 border-4 border-blue-400" id="modal-content-box">
+            <div class="text-6xl mb-4" id="modal-icon">ℹ️</div>
+            <h3 class="text-2xl font-bold text-gray-800 mb-3" id="modal-title">ข้อความ</h3>
+            <p class="text-gray-600 mb-8 text-lg font-medium" id="modal-message">รายละเอียดข้อความ</p>
+            <button id="modal-close-btn" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-xl text-lg shadow-md transform transition hover:scale-105">
+                ตกลง
+            </button>
+        </div>
+    </div>
+
+    <!-- ES Module Script for MediaPipe Tasks Vision (Modern Approach) -->
+    <script type="module">
+        import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs";
+
+        // --- Data: Musical Notes (รวมระดับเสียง และ ประเภทโน้ต) ---
+        const musicalNotes = [
+            // หมวดที่ 1: ระดับเสียง (Pitch Notes)
+            { id: "do", en: "C", th: "โด", emoji: "🍎", color: "#ef4444", noteSound: "C4" },
+            { id: "re", en: "D", th: "เร", emoji: "🍊", color: "#f97316", noteSound: "D4" },
+            { id: "mi", en: "E", th: "มี", emoji: "🍌", color: "#eab308", noteSound: "E4" },
+            { id: "fa", en: "F", th: "ฟา", emoji: "🍏", color: "#22c55e", noteSound: "F4" },
+            { id: "sol", en: "G", th: "ซอล", emoji: "💧", color: "#3b82f6", noteSound: "G4" },
+            { id: "la", en: "A", th: "ลา", emoji: "🍇", color: "#a855f7", noteSound: "A4" },
+            { id: "ti", en: "B", th: "ที", emoji: "🌸", color: "#ec4899", noteSound: "B4" },
+            
+            // หมวดที่ 2: ประเภทโน้ตดนตรี (Duration Notes)
+            { id: "whole", en: "𝅝", th: "โน้ตตัวกลม", emoji: "⚪", color: "#1f2937", noteSound: "C4" },
+            { id: "half", en: "𝅗𝅥", th: "โน้ตตัวขาว", emoji: "🎵", color: "#1f2937", noteSound: "E4" },
+            { id: "quarter", en: "𝅘𝅥", th: "โน้ตตัวดำ", emoji: "⚫", color: "#1f2937", noteSound: "G4" },
+            { id: "eighth", en: "𝅘𝅥𝅮", th: "เขบ็ตหนึ่งชั้น", emoji: "🎶", color: "#1f2937", noteSound: "C5" },
+            { id: "sixteenth", en: "𝅘𝅥𝅯", th: "เขบ็ตสองชั้น", emoji: "🎼", color: "#1f2937", noteSound: "E5" }
+        ];
+
+        // --- Core State Variables ---
+        let gameState = 'START'; // START, PLAYING, END
+        let score = 0;
+        let timeLeft = 60;
+        let timerInterval = null;
+        let currentMission = null;
+        
+        const canvas = document.getElementById('output_canvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('input_video');
+        
+        let canvasWidth = window.innerWidth;
+        let canvasHeight = window.innerHeight;
+        let items = []; 
+        let floatingTexts = [];
+        let basketZone = { x: 0, y: 0, w: 0, h: 0 };
+        let pointers = []; 
+        
+        // MediaPipe Variables
+        let handLandmarker = undefined;
+        let webcamRunning = false;
+        let lastVideoTime = -1;
+        let hasCamera = false;
+
+        // Tone.js Audio Setup
+        let synth;
+        let errorSynth;
+
+        function initAudio() {
+            if(!synth) {
+                // สร้างเสียง Synth สดใสสำหรับตอนตอบถูก
+                synth = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: { type: "triangle" },
+                    envelope: { attack: 0.05, decay: 0.2, sustain: 0.4, release: 1 }
+                }).toDestination();
+                
+                // เสียงเตือนสั้นๆ ตอนตอบผิด
+                errorSynth = new Tone.MembraneSynth().toDestination();
+            }
+            // จำเป็นต้องเรียก Tone.start() หลังจากการโต้ตอบของผู้ใช้ (User Gesture) เพื่อให้เบราว์เซอร์อนุญาตให้มีเสียง
+            Tone.start();
+        }
+
+        // --- STREAMING_CHUNK:Configuring utilities and resizing... ---
+        function resizeCanvas() {
+            canvasWidth = window.innerWidth;
+            canvasHeight = window.innerHeight;
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            
+            // Basket Zone (ด้านล่างจอ 160px เพื่อให้หยอดง่ายขึ้น)
+            basketZone = {
+                x: 0,
+                y: canvasHeight - 160,
+                w: canvasWidth,
+                h: 160
+            };
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function showModal(title, message, icon = 'ℹ️') {
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-message').innerText = message;
+            document.getElementById('modal-icon').innerText = icon;
+            const modal = document.getElementById('custom-modal');
+            const box = document.getElementById('modal-content-box');
+            modal.classList.remove('hidden');
+            setTimeout(() => box.classList.remove('scale-95'), 10);
+        }
+
+        document.getElementById('modal-close-btn').addEventListener('click', () => {
+            document.getElementById('custom-modal').classList.add('hidden');
+            document.getElementById('modal-content-box').classList.add('scale-95');
+        });
+
+        // --- STREAMING_CHUNK:Setting up MediaPipe AI module... ---
+        async function initializeHandTracking() {
+            try {
+                const vision = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+                );
+                handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+                        delegate: "GPU"
+                    },
+                    runningMode: "VIDEO",
+                    numHands: 2,
+                    minHandDetectionConfidence: 0.6,
+                    minHandPresenceConfidence: 0.6,
+                    minTrackingConfidence: 0.6
+                });
+
+                // Start Camera
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 1280, height: 720, facingMode: "user" } 
+                });
+                video.srcObject = stream;
+                video.addEventListener("loadeddata", () => {
+                    hasCamera = true;
+                    document.getElementById('loading-cam').classList.add('hidden');
+                    document.getElementById('start-btn').classList.remove('hidden');
+                    window.requestAnimationFrame(renderLoop);
+                });
+            } catch (err) {
+                console.error("Camera/MediaPipe init error:", err);
+                hasCamera = false;
+                document.getElementById('loading-cam').classList.add('hidden');
+                document.getElementById('start-btn').classList.remove('hidden');
+                showModal("แจ้งเตือนกล้อง", "ไม่สามารถเปิดกล้องได้ เกมจะใช้พื้นหลังสีเขียวแทน คุณสามารถใช้เมาส์หรือนิ้วลากไอเทมเล่นแทนมือได้ครับ", "📷");
+                window.requestAnimationFrame(renderLoop);
+            }
+        }
+        
+        // Start Initialization immediately
+        initializeHandTracking();
+
+        // --- STREAMING_CHUNK:Defining mouse and touch fallback interactions... ---
+        // Fallback for Touch and Mouse if camera fails or user wants to play physically
+        function addFallbackPointer(id, x, y, isPinching) {
+            let p = pointers.find(p => p.id === id);
+            if (p) {
+                p.x = x; p.y = y; p.isPinching = isPinching;
+            } else {
+                pointers.push({ id, type: 'fallback', x, y, isPinching });
+            }
+        }
+        function removeFallbackPointer(id) {
+            pointers = pointers.filter(p => p.id !== id);
+        }
+
+        canvas.addEventListener('mousedown', (e) => addFallbackPointer('mouse', e.clientX, e.clientY, true));
+        canvas.addEventListener('mousemove', (e) => {
+            if(pointers.find(p => p.id === 'mouse' && p.isPinching)) addFallbackPointer('mouse', e.clientX, e.clientY, true);
+            else addFallbackPointer('mouse', e.clientX, e.clientY, false);
+        });
+        canvas.addEventListener('mouseup', () => removeFallbackPointer('mouse'));
+        canvas.addEventListener('mouseleave', () => removeFallbackPointer('mouse'));
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            Array.from(e.changedTouches).forEach(t => addFallbackPointer(`touch_${t.identifier}`, t.clientX, t.clientY, true));
+        }, {passive: false});
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            Array.from(e.changedTouches).forEach(t => addFallbackPointer(`touch_${t.identifier}`, t.clientX, t.clientY, true));
+        }, {passive: false});
+        canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            Array.from(e.changedTouches).forEach(t => removeFallbackPointer(`touch_${t.identifier}`));
+        }, {passive: false});
+
+        // --- STREAMING_CHUNK:Creating Game Object classes (NoteItem)... ---
+        class NoteItem {
+            constructor() {
+                const note = musicalNotes[Math.floor(Math.random() * musicalNotes.length)];
+                this.id = note.id;
+                this.en = note.en;
+                this.th = note.th;
+                this.color = note.color;
+                this.emoji = note.emoji;
+                this.noteSound = note.noteSound;
+                
+                this.radius = Math.min(canvasWidth, canvasHeight) * 0.12; 
+                this.x = Math.random() * (canvasWidth - this.radius * 2) + this.radius;
+                this.y = -this.radius;
+                
+                // ปรับความเร็วให้ไวขึ้น (เร็วขึ้นเป็น 3-6.5 เพื่อความท้าทาย)
+                this.vy = (Math.random() * 3.5) + 3.0; 
+                this.isDragged = false;
+                this.draggedBy = null;
+                this.isDead = false;
+                this.scale = 1;
+            }
+
+            update() {
+                if (this.isDead) return;
+
+                if (this.isDragged) {
+                    const pointer = pointers.find(p => p.id === this.draggedBy);
+                    if (pointer && pointer.isPinching) {
+                        // ติดตามมือ
+                        this.x = pointer.x;
+                        this.y = pointer.y;
+                        this.scale = 1.15; // ขยายเมื่อถูกหยิบ
+                    } else {
+                        // ปล่อยมือแล้วเช็คว่าลงตะกร้าไหม
+                        this.isDragged = false;
+                        this.draggedBy = null;
+                        this.scale = 1;
+                        this.checkDrop();
+                    }
+                } else {
+                    this.y += this.vy;
+                    // เลยจอไปแล้ว
+                    if (this.y - this.radius > canvasHeight) {
+                        this.isDead = true;
+                    }
+                }
+            }
+
+            draw(ctx) {
+                if (this.isDead) return;
+                
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.scale(this.scale, this.scale);
+
+                // พื้นหลังวงกลม
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                ctx.fill();
+                ctx.lineWidth = 6;
+                ctx.strokeStyle = this.color;
+                ctx.stroke();
+
+                // วาดอักษรย่อโน้ตดนตรีภาษาอังกฤษ (C D E F G A B) ตรงกลาง
+                ctx.fillStyle = this.color;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.font = `bold ${this.radius * 1.1}px "Mali", sans-serif`;
+                ctx.fillText(this.en, 0, -this.radius * 0.05);
+                
+                // วาดชื่อภาษาไทยและ Emoji ด้านล่าง
+                ctx.font = `bold ${this.radius * 0.3}px Mali`;
+                ctx.fillStyle = '#4b5563';
+                ctx.fillText(`${this.emoji} ${this.th}`, 0, this.radius * 0.6);
+                
+                ctx.restore();
+            }
+
+            checkDrop() {
+                // เช็คว่าตำแหน่งตอนปล่อยอยู่ต่ำกว่าเส้นโซนตะกร้าหรือไม่
+                if (this.y > basketZone.y) {
+                    if (this.id === currentMission.id) {
+                        // ภารกิจสำเร็จ
+                        score += 10;
+                        updateScoreDisplay();
+                        spawnFloatingText("+10", this.x, this.y, '#10b981');
+                        
+                        // เล่นเสียงดนตรีตามโน้ตที่คีบลงไป (Audio Reward)
+                        if(synth) synth.triggerAttackRelease(this.noteSound, "4n");
+
+                        setNewMission();
+                        
+                        // ล้างไอเทมทั้งหมดอย่างปลอดภัย (ป้องกัน Loop Error)
+                        items.forEach(item => item.isDead = true);
+                    } else {
+                        // ผิดตัว
+                        spawnFloatingText("❌", this.x, this.y, '#ef4444');
+                        if(errorSynth) errorSynth.triggerAttackRelease("C2", "8n");
+                        this.isDead = true;
+                    }
+                }
+            }
+        }
+
+        // --- STREAMING_CHUNK:Implementing effects and main render loop... ---
+        function spawnFloatingText(text, x, y, color) {
+            floatingTexts.push({ text, x, y, color, alpha: 1, vy: -2 });
+        }
+
+        function drawFloatingTexts() {
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                let ft = floatingTexts[i];
+                ctx.save();
+                ctx.font = "bold 50px Mali";
+                ctx.fillStyle = ft.color;
+                ctx.globalAlpha = ft.alpha;
+                ctx.textAlign = 'center';
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 5;
+                ctx.strokeText(ft.text, ft.x, ft.y);
+                ctx.fillText(ft.text, ft.x, ft.y);
+                ctx.restore();
+
+                ft.y += ft.vy;
+                ft.alpha -= 0.02;
+                if (ft.alpha <= 0) floatingTexts.splice(i, 1);
+            }
+        }
+
+        // ตัวเชื่อมข้อต่อมือ (Hand Skeleton connections)
+        const HAND_CONNECTIONS = [
+            [0,1], [1,2], [2,3], [3,4], // Thumb
+            [0,5], [5,6], [6,7], [7,8], // Index
+            [5,9], [9,10], [10,11], [11,12], // Middle
+            [9,13], [13,14], [14,15], [15,16], // Ring
+            [13,17], [17,18], [18,19], [19,20], // Pinky
+            [0,17] // Palm base
+        ];
+
+        function renderLoop() {
+            // เคลียร์หน้าจอทุกเฟรม
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+            // วาดภาพพื้นหลัง
+            if (hasCamera && video.readyState >= 2) {
+                // วาดวิดีโอแบบส่องกระจก (Mirror)
+                ctx.save();
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, -canvasWidth, 0, canvasWidth, canvasHeight);
+                ctx.restore();
+
+                // วิเคราะห์มือผ่าน MediaPipe Tasks API
+                if (handLandmarker && video.currentTime !== lastVideoTime && gameState === 'PLAYING') {
+                    lastVideoTime = video.currentTime;
+                    const results = handLandmarker.detectForVideo(video, performance.now());
+                    
+                    // ล้างข้อมูลมือเก่าออก เหลือไว้แต่เมาส์/ทัช
+                    pointers = pointers.filter(p => p.type !== 'hand');
+                    
+                    if (results.landmarks) {
+                        results.landmarks.forEach((landmarks, index) => {
+                            const thumb = landmarks[4];
+                            const indexFinger = landmarks[8];
+                            
+                            // กลับแกน X เพราะภาพถูก Mirror
+                            const thumbX = (1 - thumb.x) * canvasWidth;
+                            const thumbY = thumb.y * canvasHeight;
+                            const indexX = (1 - indexFinger.x) * canvasWidth;
+                            const indexY = indexFinger.y * canvasHeight;
+                            
+                            // คำนวณระยะห่างระหว่างปลายนิ้วโป้งและนิ้วชี้
+                            const distance = Math.hypot(indexX - thumbX, indexY - thumbY);
+                            // ตั้งค่า threshold การจีบอ้างอิงจากขนาดหน้าจอ
+                            const pinchThreshold = Math.min(canvasWidth, canvasHeight) * 0.08;
+                            const isPinching = distance < pinchThreshold;
+                            
+                            // ตำแหน่งศูนย์กลางการจีบ
+                            const centerX = (thumbX + indexX) / 2;
+                            const centerY = (thumbY + indexY) / 2;
+
+                            pointers.push({
+                                id: `hand_${index}`,
+                                type: 'hand',
+                                x: centerX,
+                                y: centerY,
+                                isPinching: isPinching,
+                                landmarks: landmarks // เก็บไว้ใช้วาดเส้น
+                            });
+                        });
+                    }
+                }
+            } else if (!hasCamera) {
+                // กรณีไม่มีกล้อง ให้พื้นหลังเป็นสีเขียว
+                ctx.fillStyle = '#86efac';
+                ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            }
+
+            // --- ส่วนของ Logic เกมเพลย์ ---
+            if (gameState === 'PLAYING') {
+                // วาดโซนตะกร้า
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.fillRect(0, basketZone.y, canvasWidth, basketZone.h);
+                ctx.beginPath();
+                ctx.moveTo(0, basketZone.y);
+                ctx.lineTo(canvasWidth, basketZone.y);
+                ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                ctx.lineWidth = 5;
+                ctx.setLineDash([15, 15]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // วาดเส้นและจุดบนมือ
+                pointers.forEach(p => {
+                    if (p.type === 'hand' && p.landmarks) {
+                        ctx.save();
+                        // วาดโครงกระดูกสีเขียว
+                        ctx.strokeStyle = '#22c55e';
+                        ctx.lineWidth = 3;
+                        HAND_CONNECTIONS.forEach(conn => {
+                            const pt1 = p.landmarks[conn[0]];
+                            const pt2 = p.landmarks[conn[1]];
+                            ctx.beginPath();
+                            ctx.moveTo((1 - pt1.x) * canvasWidth, pt1.y * canvasHeight);
+                            ctx.lineTo((1 - pt2.x) * canvasWidth, pt2.y * canvasHeight);
+                            ctx.stroke();
+                        });
+                        // วาดข้อต่อสีเหลือง
+                        ctx.fillStyle = '#fde047';
+                        p.landmarks.forEach(lm => {
+                            ctx.beginPath();
+                            ctx.arc((1 - lm.x) * canvasWidth, lm.y * canvasHeight, 4, 0, Math.PI * 2);
+                            ctx.fill();
+                        });
+                        ctx.restore();
+                    }
+                    
+                    // เอฟเฟกต์วงกลมเรืองแสงเมื่อทำท่า "จีบนิ้ว" หรือคลิกเมาส์
+                    if (p.isPinching) {
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 25, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(250, 204, 21, 0.5)';
+                        ctx.fill();
+                        ctx.lineWidth = 4;
+                        ctx.strokeStyle = '#eab308';
+                        ctx.stroke();
+                    }
+                });
+
+                // การสุ่มเกิดไอเทม (ปรับเพิ่มความถี่ 0.04 เพื่อให้เร็วขึ้น สนุกขึ้น)
+                if (Math.random() < 0.04) { 
+                    items.push(new NoteItem());
+                }
+
+                // ประมวลผลไอเทมทั้งหมด
+                for (let i = items.length - 1; i >= 0; i--) {
+                    let item = items[i];
+                    
+                    // การชนและการหยิบ
+                    if (!item.isDragged && !item.isDead) {
+                        pointers.forEach(pointer => {
+                            // ถ้าจีบอยู่และยังไม่ได้ถืออะไร
+                            if (pointer.isPinching && !pointer.holdingSomething) {
+                                const dist = Math.hypot(item.x - pointer.x, item.y - pointer.y);
+                                if (dist < item.radius) {
+                                    item.isDragged = true;
+                                    item.draggedBy = pointer.id;
+                                    pointer.holdingSomething = true;
+                                }
+                            }
+                        });
+                    }
+
+                    item.update();
+                    item.draw(ctx);
+                    
+                    if (item.isDead) items.splice(i, 1);
+                }
+
+                // รีเซ็ตสถานะเพื่อให้ปลายนิ้วหยิบของได้ทีละ 1 ชิ้น
+                pointers.forEach(p => p.holdingSomething = false);
+
+                drawFloatingTexts();
+            }
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        // --- STREAMING_CHUNK:Game Control Methods and UI Events... ---
+        function setNewMission() {
+            currentMission = musicalNotes[Math.floor(Math.random() * musicalNotes.length)];
+            const display = document.getElementById('mission-display');
+            display.innerText = `${currentMission.en} (${currentMission.th}) ${currentMission.emoji}`;
+            display.style.color = currentMission.color;
+            
+            // ทำให้ป้ายเด้งเมื่อเปลี่ยนภารกิจ
+            display.parentElement.classList.remove('animate-bounce-slow');
+            void display.parentElement.offsetWidth; 
+            display.parentElement.classList.add('animate-bounce-slow');
+        }
+
+        function updateScoreDisplay() {
+            const display = document.getElementById('score-display');
+            display.innerText = score;
+            display.classList.add('scale-150', 'text-yellow-500');
+            setTimeout(() => display.classList.remove('scale-150', 'text-yellow-500'), 300);
+        }
+
+        function startGame() {
+            // สำคัญ: ต้องเปิดใช้งาน Audio Context จากการโต้ตอบของผู้ใช้ (User Action)
+            initAudio();
+
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('game-hud').classList.remove('hidden');
+            document.getElementById('basket-hint').classList.remove('hidden');
+            
+            gameState = 'PLAYING';
+            score = 0;
+            timeLeft = 60; // 60 วินาที
+            items = [];
+            floatingTexts = [];
+            updateScoreDisplay();
+            setNewMission();
+            
+            document.getElementById('time-display').innerText = timeLeft;
+            
+            // จับเวลา
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                document.getElementById('time-display').innerText = timeLeft;
+                if (timeLeft <= 10) {
+                    document.getElementById('time-display').classList.add('animate-pulse');
+                }
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function endGame() {
+            gameState = 'END';
+            clearInterval(timerInterval);
+            document.getElementById('time-display').classList.remove('animate-pulse');
+            
+            // ปิด UI เกม
+            document.getElementById('game-hud').classList.add('hidden');
+            document.getElementById('basket-hint').classList.add('hidden');
+            
+            // แสดงผลคะแนนในหน้าเกียรติบัตร
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('end-screen').classList.remove('hidden');
+            
+            // เล่นคอร์ดแสดงความยินดีตอนจบเกม
+            if(synth) {
+                const now = Tone.now();
+                synth.triggerAttackRelease(["C4", "E4", "G4"], "2n", now);
+                synth.triggerAttackRelease(["C5", "E5", "G5"], "1n", now + 0.5);
+            }
+        }
+
+        // --- Event Listeners ---
+        document.getElementById('start-btn').addEventListener('click', startGame);
+        
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            document.getElementById('end-screen').classList.add('hidden');
+            document.getElementById('player-name').value = ''; 
+            startGame();
+        });
+
+        // Screenshot Engine (html2canvas)
+        document.getElementById('capture-btn').addEventListener('click', () => {
+            const certElement = document.getElementById('certificate');
+            const playerName = document.getElementById('player-name').value.trim();
+            
+            if (playerName === '') {
+                showModal("ลืมพิมพ์ชื่อ!", "กรุณาพิมพ์ชื่อคนเก่งในช่องว่างก่อนกดบันทึกภาพนะครับ", "✍️");
+                document.getElementById('player-name').focus();
+                return;
+            }
+
+            // แปลงช่อง Input Text ให้กลายเป็นข้อความ Span ชั่วคราวเพื่อให้ออกมาสวยงามเวลาแคป
+            const inputEl = document.getElementById('player-name');
+            const spanEl = document.createElement('span');
+            spanEl.className = "text-3xl md:text-4xl font-bold text-blue-700 w-full mb-6 pb-2 inline-block border-b-2 border-transparent";
+            spanEl.innerText = playerName;
+            
+            inputEl.parentNode.replaceChild(spanEl, inputEl);
+
+            const btn = document.getElementById('capture-btn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "⏳ กำลังประมวลผล...";
+            btn.disabled = true;
+
+            // ทำการแคปภาพ
+            html2canvas(certElement, {
+                scale: 2,
+                backgroundColor: null,
+                logging: false
+            }).then(canvas => {
+                // นำ Input กลับมาคืนที่เดิม
+                spanEl.parentNode.replaceChild(inputEl, spanEl);
+                inputEl.value = playerName;
+
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+
+                // ดาวน์โหลดรูปภาพ
+                const link = document.createElement('a');
+                link.download = `Certificate_MelodyGarden_${playerName}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+                
+                showModal("สำเร็จ!", "บันทึกเกียรติบัตรลงในอุปกรณ์เรียบร้อยแล้ว ยอดเยี่ยมมาก!", "🎉");
+            }).catch(err => {
+                console.error("Capture error:", err);
+                if(spanEl.parentNode) spanEl.parentNode.replaceChild(inputEl, spanEl);
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                showModal("เกิดข้อผิดพลาด", "ไม่สามารถบันทึกภาพได้ในขณะนี้", "❌");
+            });
+        });
+
+    </script>
+</body>
+</html>
